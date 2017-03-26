@@ -52,6 +52,25 @@ def calculer_totaux(df):
 
     return stats, choix
 
+# Codes postaux
+# ATTENTION: La colonne "departement" du csv est nommee ici "nomdepartement".
+# Ceci permet de maintenir la coherence des noms des index avec les autres dataframes.
+allinseeinfos = pd.read_csv(
+    'data/inseeinfos.csv',
+    sep=';',
+    skiprows=1,
+    encoding="UTF-8",
+    names=['insee', 'codespostaux', 'communes', 'nomdepartement', 'region', 'statut', 'altitude', 'superficie', 'population', 'geo_point_2d', 'geo_shape', 'idgeofla', 'commune_code_fromcsv', 'codecanton', 'codearrondissement', 'codedepartement', 'coderegion'],
+    dtype={"insee": str, "codespostaux": str},
+)
+allinseeinfos = allinseeinfos.reset_index()
+allinseeinfos['departement'] = allinseeinfos.insee.str.slice(0,2)
+allinseeinfos['commune_code'] = allinseeinfos.insee.str.slice(2)
+allinseeinfos = allinseeinfos.set_index(['departement', 'commune_code'])
+
+allinseeinfos['listecodespostaux'] = allinseeinfos.codespostaux.apply(lambda x: x.split('/'))
+inseeinfos = allinseeinfos.ix[:, 'listecodespostaux']
+
 
 def calculer_scores(stats, choix, nonistes_gauche, nonistes_droite):
     scores = 100 * choix[1].divide(stats[1]['inscrits'], axis=0)
@@ -159,6 +178,7 @@ df_communes = pd.concat([
     scores_pres_2012.rename(columns=lambda c: c + '_PRES_2012'),
     scores_pres_2007.rename(columns=lambda c: c + '_PRES_2007'),
     scores_legi_2012.rename(columns=lambda c: c + '_LEGI_2012')
+    inseeinfos
 ], axis=1)
 
 # a améliorer, on pourrait sortir directement du XML par exemple
