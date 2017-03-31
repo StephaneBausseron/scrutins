@@ -9,7 +9,6 @@ from json import encoder
 
 encoder.FLOAT_REPR = lambda o: format(o, '.2f')
 
-
 def calculer_totaux(df):
     stats_index = ['departement', 'commune_code', 'tour']
     choix_index = stats_index + ['choix']
@@ -60,17 +59,72 @@ allinseeinfos = pd.read_csv(
     sep=';',
     skiprows=1,
     encoding="UTF-8",
-    names=['insee', 'codespostaux', 'communes', 'nomdepartement', 'region', 'statut', 'altitude', 'superficie', 'population', 'geo_point_2d', 'geo_shape', 'idgeofla', 'commune_code_fromcsv', 'codecanton', 'codearrondissement', 'codedepartement', 'coderegion'],
+    names=['insee', 'codespostaux', 'communes'],
     dtype={"insee": str, "codespostaux": str},
+    usecols=[0, 1, 2]
 )
 allinseeinfos = allinseeinfos.reset_index()
 allinseeinfos['departement'] = allinseeinfos.insee.str.slice(0,2)
 allinseeinfos['commune_code'] = allinseeinfos.insee.str.slice(2)
 allinseeinfos = allinseeinfos.set_index(['departement', 'commune_code'])
 
-allinseeinfos['listecodespostaux'] = allinseeinfos.codespostaux.apply(lambda x: x.split('/'))
-inseeinfos = allinseeinfos.ix[:, 'listecodespostaux']
+allinseeinfos['listecodespostaux'] = allinseeinfos.codespostaux.apply(lambda x: str(x).split('/'))
 
+inseeinfos = allinseeinfos.ix[:, 'listecodespostaux']
+# Manque:
+# - L'ensemble du département "98"
+# - Les ZX/ZS : la conversion vers le code Insee est ok, mais enregistrement manquant dans la base des codes insee.
+# - ZA: plusieurs communes manques.
+# Les 98 sont récupérés depuis une autre base, et une liste "hard codé" apporte les cas manquants
+specialToInseeConversion = {
+    "ZA":lambda x: x+97000, # OK
+    "ZB":lambda x: x+97000, # OK
+    "ZC":lambda x: x+97000, # OK
+    "ZD":lambda x: x+97000, # KO
+    "ZM":lambda x: x+97100,
+    "ZN":lambda x: x+98000, # KO: No information about 98xxx codes
+    "ZP":lambda x: x+98700, # KO: No information about 98xxx codes
+    "ZS":lambda x: x+97000, # KO: Only Miquelon-Langlade, which is not referenced in insee database
+    "ZX":lambda x: x+97000, # KO
+    "ZW":lambda x: 'ERROR', # Wallis-et-Futuna, managed by superSpecialToPostalConversion
+    "ZZ":lambda x:'00000',
+}
+
+# Ici, on convertie les cas vraiment particulier, en code postal directement.
+superSpecialToPostalConversion = {
+    "ZA123": "97133", # SAint-Barthélemy
+    "ZA127": "97150", # Saint-Martin (pour pres_2007)
+    "ZS501": "97500", # Miquelon-Langlade
+    "ZS502": "97410", # Saint-Pierre
+    "ZX701": "97133", # Saint-Barthélemy
+    "ZX801": "97150", # Saint-Martin (pour pres/legi_2012)
+    "ZW001": "98620",
+}
+
+def convertSpecialToCodePostal(specialCode):
+    try:
+        if specialCode in superSpecialToPostalConversion:
+            return superSpecialToPostalConversion[specialCode]
+        else:
+            specialDep = specialCode[0:2]
+            specialCommune = int(specialCode[2:])
+
+            try:
+                insee = str(specialToInseeConversion[specialDep](specialCommune))
+                if insee == '00000':
+                    return '00000'
+                elif insee in superSpecialToPostalConversion:
+                    return superSpecialToPostalConversion[insee]
+                elif insee[0:2] == '98':
+                    return ["NOT_FOUND"] # Replace by list of 98xxx insee codes
+                else:
+                    return allinseeinfos.get_value((insee[0:2], insee[2:]), "listecodespostaux")
+            except KeyError:
+                print "Special code '%s' has insee code '%s', but not postal code associated" % (specialCode, insee)
+                return ["NOT_FOUND"]
+    except KeyError:
+        print "Special code '%s' cannot be handled" % specialCode
+        return ["NOT_FOUND"]
 
 def calculer_scores(stats, choix, nonistes_gauche, nonistes_droite):
     scores = 100 * choix[1].divide(stats[1]['inscrits'], axis=0)
@@ -173,12 +227,30 @@ scores_legi_2012 = calculer_scores(stats_legi_2012, choix_legi_2012,
 
 
 
+
 df_communes = pd.concat([
     scores_tce,
     scores_pres_2012.rename(columns=lambda c: c + '_PRES_2012'),
     scores_pres_2007.rename(columns=lambda c: c + '_PRES_2007'),
     scores_legi_2012.rename(columns=lambda c: c + '_LEGI_2012')
-    inseeinfos
+], axis=1)
+
+# Complete inseeinfos with special code from election results
+# (Zx...).
+
+
+
+listspecial = {dep+commune for (dep, commune), scores in df_communes.iterrows() if dep[0] == "Z"}
+
+specialinseeinfos = pd.DataFrame({
+        "departement"  : [special[0:2] for special in listspecial],
+        "commune_code" : [special[2:] for special in listspecial],
+        "listecodespostaux" : [convertSpecialToCodePostal(special) for special in listspecial]})\
+    .set_index(["departement", "commune_code"]).ix[:, 'listecodespostaux']
+
+df_communes = pd.concat([
+    df_communes,
+    inseeinfos,
 ], axis=1)
 
 # a améliorer, on pourrait sortir directement du XML par exemple
