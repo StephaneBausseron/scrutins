@@ -248,6 +248,9 @@ specialinseeinfos = pd.DataFrame({
         "listecodespostaux" : [convertSpecialToCodePostal(special) for special in listspecial]})\
     .set_index(["departement", "commune_code"]).ix[:, 'listecodespostaux']
 
+inseeinfos.to_csv("inseeinfos.csv")
+specialinseeinfos.to_csv("specialinseeinfos.csv")
+
 df_communes = pd.concat([
     df_communes,
     inseeinfos,
